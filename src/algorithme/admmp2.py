@@ -1,6 +1,6 @@
 import numpy as np
 import plotly.graph_objects as go
-
+import time
 
 # TODO : 
 #    -  verifier que l'utilisation de H_inv_dot et A_dot fonctionnne bien (peut être prblème de dim, en théorie le produit dans np.fft.ifft2 doit être terme à terme et il faut padder si  besoin)
@@ -130,7 +130,10 @@ class ADMMP2:
 
         #paramètres pour plot la convergence : 
         tabError = []
+        tabTime = []
+        timeRef= time()
         err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
+
         while (err)>eps:
             x = x_
             u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
@@ -144,8 +147,9 @@ class ADMMP2:
 
             tabError.append(err)
             err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
+            tabTime.append(time()-timeRef)
             
-        return x_, iter,tabError
+        return x_, iter,tabError,tabTime
 
 #******************************************************************************************************************
 #                                                   Affichages -- PLOTLY
