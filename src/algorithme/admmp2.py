@@ -35,6 +35,32 @@ class ADMMP2:
     def _precompute_matrix(self, T:np.ndarray, y:np.ndarray, mu:np.ndarray)-> np.ndarray:
             return T.T @ y, np.linalg.inv(T.T @ T + mu * np.identity(T.shape[0]))
 
+    
+    
+    def gaussian_filter_2d(self, x: np.ndarray, h: np.ndarray) -> np.ndarray:
+        """Apply gaussian smoothing on a 2D array
+        Args:
+            x (np.ndarray): The 2D array to be filtered
+            h (np.ndarray): 2D Gaussian kernel obtained from the outer product of two gaussian windows
+        Returns:
+            np.ndarray: The 2D array after the gaussian filter
+        """
+        M1 = x.shape[0]
+        N1 = x.shape[1]
+        M2 = h.shape[0]
+        N2 = h.shape[1]
+        M = M1 + M2 - 1
+        N = N1 + N2 - 1
+
+        P1_x = np.pad(x, ((0, M - M1), (0, N - N1)), "constant", constant_values=(0))
+        P2_h = np.pad(h, ((0, M - M2), (0, N - N2)), "constant", constant_values=(0))
+        dft_P1_x = np.fft.rfft2(P1_x)
+        dft_P2_h = np.fft.rfft2(P2_h)
+        hadamard = np.multiply(dft_P1_x, dft_P2_h)
+        inv = np.fft.irfft2(hadamard)
+        return inv[:M1, :N1]
+    
+    
     @np.vectorize
     def _shrink(x:float, lambd:float)->float:
         """
