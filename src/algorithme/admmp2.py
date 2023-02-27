@@ -55,8 +55,23 @@ class ADMMP2:
         """
         return 1/x if x!=0 else 0
 
-    def _mask_operator_generator(self, shape):
-            pass
+    def _mask_operator_generator(self, x, y):
+            T = np.identity(x.shape[0]*x.shape[1])
+            a = (x.shape[0] - y.shape[0]) // 2
+            b = (x.shape[1] - y.shape[1]) // 2 
+            
+            for i in range(a):
+                index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
+            for i in range(x.shape[0] -a, x.shape[0]):
+                index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
+            for j in range(b):
+                index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
+            for j in range(x.shape[1] - b, x.shape[1]):
+                index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
+                
+            T = np.delete(T, set(index_list), axis=0)
+            
+            return T
     
     def fdiag_inv(self, h:np.ndarray)-> np.ndarray:
         """
