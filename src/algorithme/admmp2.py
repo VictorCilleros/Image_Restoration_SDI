@@ -1,6 +1,7 @@
 import numpy as np
 import plotly.graph_objects as go
 import time
+from PIL import Image
 
 # TODO : 
 #    -  verifier que l'utilisation de H_inv_dot et A_dot fonctionnne bien (peut être prblème de dim, en théorie le produit dans np.fft.ifft2 doit être terme à terme et il faut padder si  besoin)
@@ -8,6 +9,11 @@ import time
 #    - Si besoin prendre R = Id au début
 #    - h opérateur de convolution, par exemple array de taille 9 pour une fenêtre 3*3 (peut être que des 1 ou des coefs d'une gausienne par ex)
 
+
+
+#
+#  h = 1/16 * np.array([[1,2,1],[2,4,2],[1,2,1]])
+#  R = 
 
 class ADMMP2:
 
