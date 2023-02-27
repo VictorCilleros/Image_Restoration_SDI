@@ -1,4 +1,6 @@
 import numpy as np
+import plotly.graph_objects as go
+
 
 # TODO : 
 #    -  verifier que l'utilisation de H_inv_dot et A_dot fonctionnne bien (peut être prblème de dim, en théorie le produit dans np.fft.ifft2 doit être terme à terme et il faut padder si  besoin)
@@ -15,12 +17,12 @@ class ADMMP2:
         assert mu>0, "mu doit être strictement positif."
 
         self.h = h   # opérateur de convolution, permet de calculer Ax avec diag(fft2(h))
-        self.R = R
         self.lambd = lambd
         self.mu = mu
         self.nu = nu
-        self.diag_H_inv = self.diag_H(h=h,R=R)
-        self.diag_A = self.diag_A(h=h)
+        self.diag_H_inv = self.fdiag_inv(h=h)
+        self.A_fft = self.fft(arr=h)
+        self.R_fft = self.fft(arr=R)
         #self.inv_H = self._inverse(A, R)
 
 
@@ -49,29 +51,26 @@ class ADMMP2:
     def _inv(x:float)->float:
         """
         param x(float): paramètre considéré
-        return: float, renvoie 1/x si x ne vaut pas 0, 0 sinon.
+        return : float, renvoie 1/x si x ne vaut pas 0, 0 sinon.
         """
         return 1/x if x!=0 else 0
 
     def _mask_operator_generator(self, shape):
             pass
     
-    def diag_H(self, h:np.ndarray)-> np.ndarray:
+    def fdiag_inv(self, h:np.ndarray)-> np.ndarray:
         """
         param h(np.ndarray):opérateur de convolution
-        return: np.ndarray, pré-calcule l'inverse de la transformée de Fourier discrète. Utile pour le reste du problème.
+        return : np.ndarray, pré-calcule l'inverse de la transformée de Fourier discrète. Utile pour le reste du problème.
         """
         return self._inv(np.fft.fft2(h)**2)
 
-    def diag_R(self, R:np.ndarray)-> np.ndarray:
+    def fft(self,arr:np.ndarray)->np.ndarray:
         """
-        param R(np.ndarray):opérateur régularisation
-        return: np.ndarray, pré-calcule l'inverse de la transformée de Fourier discrète. Utile pour le reste du problème.
+        param h(np.ndarray):opérateur considéré
+        return : np.ndarray, pré-calcule la transformée de Fourier discrète. Utile pour le reste du problème.
         """
-        # TODO
-        pass
-    def diag_A(self,h:np.ndarray)->np.ndarray:
-        return np.fft.fft2(h)
+        return np.fft.fft2(arr)
 
 
     #******************************************************************************************************************
@@ -81,12 +80,21 @@ class ADMMP2:
     def H_inv_dot(self,x:np.ndarray)->np.ndarray:
         """
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
-        return: np.ndarray, multiplication en passant par le domaine de Fourier
+        return : np.ndarray, multiplication en passant par le domaine de Fourier
         """
-        return np.fft.ifft2(self.diag_H_inv@np.fft.fft2(x)) + self.nu*np.fft.ifft2(self.R@np.fft.fft2(x))    # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(self.diag_H_inv@np.fft.fft2(x)) + self.nu*np.fft.ifft2(self.R_fft@np.fft.fft2(x))    # TODO faire le produit terme à terme et pas le @
     
     def A_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.diag_A@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(self.A_fft@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+
+    def A_dot_T(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(self.A_fft.T@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+
+    def R_dot(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(self.R_fft@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+
+    def R_dot_T(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(self.R_fft.T@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
     
 
 
@@ -98,29 +106,66 @@ class ADMMP2:
         T = self._mask_operator_generator(y.shape)
         pre_comput_Ty, inv_Tmu = self._precompute_matrix(T, y, self.mu)
 
-        #inv_diag_H = self._inverse(self.h, self.R)
-
-        eta0, eta1 = np.zeros(self.y.shape[0]),  np.zeros(self.R.shape[0])
+        eta0, eta1 = np.zeros(self.y.shape[0]),  np.zeros(self.R_fft.shape[0])
         x = np.ones(self.y.shape[0])
         u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-        u1 = self._shrink(self.R * x + eta1, self.lamb/(self.mu*self.nu))
-        #x_ = np.fft.fft2( inv_diag_H @ np.fft.ifft2( ))
-        x_ = self.H_inv_dot(self.A_dot((u0 - eta0)) + self.nu * self.R.T @ (u1 - eta1))   # transpose sur le A_dot??
+        u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
+        x_ = self.H_inv_dot(self.A_dot((u0 - eta0)) + self.nu * self.R_dot(u1 - eta1))   # transpose sur le A_dot??
         iter = 0
 
-        while (np.linalg.norm(x_ - x) / np.linalg.norm(x))>eps:
+        #paramètres pour plot la convergence : 
+        tabError = []
+        err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
+        while (err)>eps:
             x = x_
             u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-            u1 = self._shrink(self.R * x + eta1, self.lamb/(self.mu*self.nu))
+            u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
 
-            #x_ = np.fft.fft2( inv_diag_H @ np.fft.ifft2())
-            x_ = self.H_inv_dot(self.A_dot(u0 - eta0) + self.nu * self.R.T @ (u1 - eta1)) # transpose sur le A_dot??
+            x_ = self.H_inv_dot(self.A_dot(u0 - eta0) + self.nu * self.R_dot(u1 - eta1)) # transpose sur le A_dot??
 
             eta0 = eta0 - u0 + self.A_dot(x_)
-            eta1 = eta1 - u1 + self.R @ x_
+            eta1 = eta1 - u1 + self.R_dot(x_)
             iter += 1
-        return x_, iter
 
+            tabError.append(err)
+            err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
+            
+        return x_, iter,tabError
 
-    def plot_convergence(self):
-        pass
+#******************************************************************************************************************
+#                                                   Affichages -- PLOTLY
+#******************************************************************************************************************
+
+    def plot_convergence_iter(self,tabError : np.ndarray,tabTime : np.ndarray)->None:
+        
+        try:
+            x = tabTime
+        except ValueError:
+            nIter = np.shape(tabError)
+            x = np.linspace(0,nIter,nIter)
+
+        fig = go.Figure(data=go.Scatter(x = x, y = tabError))
+        fig.update_layout(
+                    title=go.layout.Title(
+                    text="Evolution de l'erreur <br><sup>Algorithme ADMMP2 </sup>",
+                    xref="paper",
+                    x=0
+                        ),
+                    xaxis=go.layout.XAxis(
+                        title=go.layout.xaxis.Title(
+                            text="nombre d'itérations",
+                            font=dict(
+                                family="Courier New, monospace",
+                                size=18,
+                                color="#7f7f7f"
+                                    )
+                                )
+                        ),
+                    yaxis=go.layout.YAxis(
+                            title=go.layout.yaxis.Title(
+                            text="Erreur en norme sur l'image",
+                            font=dict(family="Courier New, monospace",size=18,color="#7f7f7f")
+                                )
+                        )
+        )
+        fig.show()
