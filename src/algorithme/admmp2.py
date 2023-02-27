@@ -151,13 +151,13 @@ class ADMMP2:
 #                                                   Affichages -- PLOTLY
 #******************************************************************************************************************
 
-    def plot_convergence_iter(self,tabError : np.ndarray,tabTime : np.ndarray)->None:
+    def plot_convergence_iter(self,tabError : np.ndarray,tabTime : np.ndarray=None)->None:
         
-        try:
-            x = tabTime
-        except ValueError:
-            nIter = np.shape(tabError)
-            x = np.linspace(0,nIter,nIter)
+        if tabTime is not None:
+            x=tabTime
+        else:
+            nIter = np.shape(tabError)[0]
+            x = np.linspace(0,nIter,nIter+1)
 
         fig = go.Figure(data=go.Scatter(x = x, y = tabError))
         fig.update_layout(
