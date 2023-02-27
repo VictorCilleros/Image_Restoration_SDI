@@ -32,8 +32,23 @@ class ADMMP2:
     #                                                Pré-compute
     #******************************************************************************************************************
 
-    def _precompute_matrix(self, T:np.ndarray, y:np.ndarray, mu:np.ndarray)-> np.ndarray:
-            return T.T @ y, np.linalg.inv(T.T @ T + mu * np.identity(T.shape[0]))
+    def _precompute_matrix(self, x:np.ndarray,  y:np.ndarray, mu:np.ndarray)-> np.ndarray:
+        
+        a = (x.shape[0] - y.shape[0]) // 2
+        b = (x.shape[1] - y.shape[1]) // 2 
+        index_list = []
+        for i in range(a):
+            index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
+        for i in range(x.shape[0] -a, x.shape[0]):
+            index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
+        for j in range(b):
+            index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
+        for j in range(x.shape[1] - b, x.shape[1]):
+            index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
+    
+    
+        
+        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0)@ y, np.linalg.inv(np.diag([0 if i in index_list else 1 for i in range(x.shape[0]*x.shape[1])]) + mu * np.identity(x.shape[0]*x.shape[1]))
 
     
     
@@ -80,24 +95,6 @@ class ADMMP2:
         return : float, renvoie 1/x si x ne vaut pas 0, 0 sinon.
         """
         return 1/x if x!=0 else 0
-
-    def _mask_operator_generator(self, x, y):
-            T = np.identity(x.shape[0]*x.shape[1])
-            a = (x.shape[0] - y.shape[0]) // 2
-            b = (x.shape[1] - y.shape[1]) // 2 
-            
-            for i in range(a):
-                index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
-            for i in range(x.shape[0] -a, x.shape[0]):
-                index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
-            for j in range(b):
-                index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
-            for j in range(x.shape[1] - b, x.shape[1]):
-                index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
-                
-            T = np.delete(T, set(index_list), axis=0)
-            
-            return T
     
     def fdiag_inv(self, h:np.ndarray)-> np.ndarray:
         """
@@ -148,7 +145,6 @@ class ADMMP2:
         pre_comput_Ty, inv_Tmu = self._precompute_matrix(T, y, self.mu)
 
         eta0, eta1 = np.zeros(self.y.shape[0]),  np.zeros(self.R_fft.shape[0])
-        x = np.ones(self.y.shape[0])
         u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
         u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
         x_ = self.H_inv_dot(self.A_dot((u0 - eta0)) + self.nu * self.R_dot(u1 - eta1))   # transpose sur le A_dot??
