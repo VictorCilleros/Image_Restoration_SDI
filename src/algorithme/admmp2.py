@@ -126,19 +126,19 @@ class ADMMP2:
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
         return : np.ndarray, multiplication en passant par le domaine de Fourier
         """
-        return np.fft.ifft2(self.diag_H_inv@np.fft.fft2(x)) + self.nu*np.fft.ifft2(self.R_fft@np.fft.fft2(x))    # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(self.diag_H_inv*np.fft.fft2(x)) + self.nu*np.fft.ifft2(self.R_fft*np.fft.fft2(x))    # TODO faire le produit terme à terme et pas le @
     
     def A_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.A_fft@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(self.A_fft*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
 
-    def A_dot_T(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.A_fft.T@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+    def A_dot_adj(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(np.conj(self.A_fft)*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
 
     def R_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.R_fft@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(self.R_fft*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
 
-    def R_dot_T(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.R_fft.T@np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+    def R_dot_adj(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(np.conj(self.R_fft)*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
     
 
 
@@ -167,7 +167,7 @@ class ADMMP2:
             u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
             u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
 
-            x_ = self.H_inv_dot(self.A_dot(u0 - eta0) + self.nu * self.R_dot(u1 - eta1)) # transpose sur le A_dot??
+            x_ = self.H_inv_dot(self.A_dot_adj(u0 - eta0) + self.nu * self.R_dot_adj(u1 - eta1)) # transpose sur le A_dot??
 
             eta0 = eta0 - u0 + self.A_dot(x_)
             eta1 = eta1 - u1 + self.R_dot(x_)
