@@ -17,19 +17,19 @@ from PIL import Image
 
 class ADMMP2:
 
-    def __init__(self, h:np.ndarray, R:np.ndarray, lambd:float, mu:np.ndarray, nu:float):
+    def __init__(self, x:np.ndarray, h:np.ndarray, R:np.ndarray=np.identity(10), lambd:float=0.2, mu:np.ndarray=0.3, nu:float=0.4):
 
         assert nu>0, "nu doit être strictement positif."
         assert mu>0, "mu doit être strictement positif."
 
+        self.x = x
         self.h = h   # opérateur de convolution, permet de calculer Ax avec diag(fft2(h))
         self.lambd = lambd
         self.mu = mu
         self.nu = nu
-        self.diag_H_inv = self.fdiag_inv(h=h)
-        self.A_fft = self.fft(arr=h)
+        self.A_fft = self.fft(arr=np.pad(h, ((0, x.shape[0] - h.shape[0]), (0, x.shape[1]-h.shape[1])), "constant", constant_values=(0)))
+        self.inv_H = np.linalg.inv(self.A_fft)
         self.R_fft = self.fft(arr=R)
-        #self.inv_H = self._inverse(A, R)
 
 
     
@@ -54,34 +54,31 @@ class ADMMP2:
     
     
         
-        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0)@ y, np.linalg.inv(np.diag([0 if i in index_list else 1 for i in range(x.shape[0]*x.shape[1])]) + mu * np.identity(x.shape[0]*x.shape[1]))
+        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0), 1
 
     
     
-    def gaussian_filter_2d(self, x: np.ndarray, h: np.ndarray) -> np.ndarray:
+    def gaussian_filter_2d(self) -> np.ndarray:
         """Apply gaussian smoothing on a 2D array
-        Args:
-            x (np.ndarray): The 2D array to be filtered
-            h (np.ndarray): 2D Gaussian kernel obtained from the outer product of two gaussian windows
         Returns:
             np.ndarray: The 2D array after the gaussian filter
         """
+        x = self.x
+        h = self.h
         M1 = x.shape[0]
         N1 = x.shape[1]
         M2 = h.shape[0]
         N2 = h.shape[1]
-        M = M1 + M2 - 1
-        N = N1 + N2 - 1
 
-        P1_x = np.pad(x, ((0, M - M1), (0, N - N1)), "constant", constant_values=(0))
-        P2_h = np.pad(h, ((0, M - M2), (0, N - N2)), "constant", constant_values=(0))
-        dft_P1_x = np.fft.rfft2(P1_x)
+        P2_h = np.pad(h, ((0, M1-M2), (0, N1-N2)), "constant", constant_values=(0))
+        dft_P1_x = np.fft.rfft2(x)
+        dft_P2_h = np.fft.rfft2(P2_h)
         dft_P2_h = np.fft.rfft2(P2_h)
         hadamard = np.multiply(dft_P1_x, dft_P2_h)
         inv = np.fft.irfft2(hadamard)
-        return inv[:M1, :N1]
+        return inv[M2//2: M1 - M2//2, N2//2: N1 - N2//2]
     
-    
+
     @np.vectorize
     def _shrink(x:float, lambd:float)->float:
         """
@@ -126,19 +123,19 @@ class ADMMP2:
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
         return : np.ndarray, multiplication en passant par le domaine de Fourier
         """
-        return np.fft.ifft2(self.diag_H_inv*np.fft.fft2(x)) + self.nu*np.fft.ifft2(self.R_fft*np.fft.fft2(x))    # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(self.inv_H,np.fft.fft2(x))) + self.nu*np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x)))    # TODO faire le produit terme à terme et pas le @
     
     def A_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.A_fft*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
 
     def A_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.conj(self.A_fft)*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(np.conj(self.A_fft)*np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
 
     def R_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(self.R_fft*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(self.R_fft*np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
 
     def R_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.conj(self.R_fft)*np.fft.fft2(x))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(np.conj(self.R_fft)*np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
     
 
 
@@ -147,11 +144,11 @@ class ADMMP2:
     #******************************************************************************************************************
 
     def fit_transform(self, y:np.ndarray, eps:float=10e-2):
-        T = self._mask_operator_generator(y.shape)
-        pre_comput_Ty, inv_Tmu = self._precompute_matrix(T, y, self.mu)
-
-        eta0, eta1 = np.zeros(self.y.shape[0]),  np.zeros(self.R_fft.shape[0])
-        u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
+        x = self.x
+        pre_comput_Ty, inv_Tmu = self._precompute_matrix(x, y, self.mu)
+        
+        eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
+        u0 = inv_Tmu @ (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
         u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
         x_ = self.H_inv_dot(self.A_dot((u0 - eta0)) + self.nu * self.R_dot(u1 - eta1))   # transpose sur le A_dot??
         iter = 0
