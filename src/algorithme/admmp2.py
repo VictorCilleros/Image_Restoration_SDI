@@ -2,6 +2,8 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 from PIL import Image
+import pywt
+
 
 # TODO : 
 #    -  verifier que l'utilisation de H_inv_dot et A_dot fonctionnne bien (peut être prblème de dim, en théorie le produit dans np.fft.ifft2 doit être terme à terme et il faut padder si  besoin)
@@ -24,7 +26,7 @@ class ADMMP2:
         assert mu>0, "mu doit être strictement positif."
 
         self.x = x
-        self.h = h   # opérateur de convolution, permet de calculer Ax avec diag(fft2(h))
+        self.h = h   # ?????? opérateur de convolution, permet de calculer Ax avec diag(fft2(h))
         self.lambd = lambd
         self.mu = mu
         self.nu = nu
@@ -110,14 +112,109 @@ class ADMMP2:
     #******************************************************************************************************************
     #                                                   Utils
     #******************************************************************************************************************
+    def wavelet_regularization(self, x:np.ndarray)->np.ndarray:
+        """Computes Rx (sparsifying transform with wavelets frames)
 
-    def H_inv_dot(self,x:np.ndarray)->np.ndarray:
+        Args:
+            x (np.ndarray): image
+
+        Returns:
+            np.ndarray: image_reconstructed
+        """
+        # Choose the wavelet type and level
+        wavelet = 'db4'
+        level = 2
+
+        # Perform 2D wavelet decomposition
+        coeffs = pywt.wavedec2(x, wavelet, level=level)
+        W = pywt.coeffs_to_array(coeffs)[0]
+        # Set a threshold for coefficients
+        threshold = 0.2 # your threshold value
+
+        # Apply soft thresholding to the coefficients
+        coeffs_thresh = []
+        for c in coeffs:
+            if type(c) == tuple:
+                # Detail coefficients
+                c_thresh = tuple(pywt.threshold(arr, threshold, 'soft') for arr in c)
+            else:
+                # Approximation coefficient
+                c_thresh = pywt.threshold(c, threshold, 'soft')
+            coeffs_thresh.append(c_thresh)
+
+        # Reconstruct
+        img_reconstructed = pywt.waverec2(coeffs_thresh, wavelet)
+        return img_reconstructed, W
+    
+    def wavelet_regularization_adjoint(self, x: np.ndarray) -> np.ndarray:
+        """Computes R*x (sparsifying transform with wavelets frames adjoint)
+
+        Args:
+            x (np.ndarray): image
+
+        Returns:
+            np.ndarray: Results of Sparsifying adjoint transform on the given image.
+        """
+        # Choose the wavelet type and level
+        wavelet = 'db4'
+        level = 2
+
+        # Perform 2D wavelet decomposition
+        coeffs = pywt.wavedec2(x, wavelet, level=level)
+
+        # Obtain the transpose of the wavelet coefficients
+        coeffs_T = []
+        for c in coeffs:
+            c_T = tuple(arr.T for arr in c)
+            coeffs_T.append(c_T)
+
+        # Obtain the adjoint using the inverse wavelet transform
+        img_adjoint = pywt.waverec2(coeffs_T, wavelet)
+
+        return img_adjoint
+
+
+    
+
+    def H_inv_dot(self,x:np.ndarray, R)->np.ndarray:
         """
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
         return : np.ndarray, multiplication en passant par le domaine de Fourier
         """
-        H_nu_inv = 0 # A remplir 
-        return np.fft.ifft2(np.multiply(H_nu_inv,np.fft.fft2(x))) 
+        fftA = self.A_fft
+        # Compute the FFT of the sparsifying operator R
+        fftR = self.fft(R)
+        nu = self.nu
+
+
+        # Compute the size of the matrices
+        m, n = fftA.shape
+        k, l = R.shape
+
+        # Create the diagonal matrix D_nu
+        D_nu = np.zeros((m, n))
+        D_nu[0, 0] = np.real(fftA[0, 0]) + nu * np.real(fftR[0, 0])
+        for i in range(1, m):
+            D_nu[i, 0] = np.real(fftA[i, 0]) + nu * np.real(fftR[i % k, 0])
+        for j in range(1, n):
+            D_nu[0, j] = np.real(fftA[0, j]) + nu * np.real(fftR[0, j % l])
+            
+        for i in range(1, m):
+            for j in range(1, n):
+                D_nu[i, j] = nu * np.real(fftR[i % k, j % l])
+
+        # Compute the inverse of D_nu using element-wise division
+        invD_nu = 1 / D_nu
+
+        # Create the diagonal matrix from the inverse DFT coefficients
+        diag = np.fft.ifft2(invD_nu)
+
+        # Compute the FFT matrix
+        F = np.fft.fft2(np.eye(m, n))
+
+        # Compute the inverse of H_nu using the formula
+        H_nu_inv = (1 / (m * n)) * np.fft.ifft2(np.conj(F) * diag * F)
+        return np.fft.ifft2(np.multiply(H_nu_inv,np.fft.fft2(x))).real
     
     def A_dot(self,x:np.ndarray)->np.ndarray:
         return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x))).real    
@@ -125,10 +222,7 @@ class ADMMP2:
     def A_dot_adj(self,x:np.ndarray)->np.ndarray:
         return np.fft.ifft2(np.multiply(np.conj(self.A_fft),np.fft.fft2(x))).real      
 
-    def R_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x))).real     
-    def R_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.R_fft),np.fft.fft2(x))).real      
+
     
 
 
@@ -136,15 +230,16 @@ class ADMMP2:
     #                                                   ADMM-P2
     #******************************************************************************************************************
 
-    def fit_transform(self, y:np.ndarray, eps:float=10e-2):
+    def fit_transform(self, y:np.ndarray, eps:float=10e-2, stop=None):
         x = self.x
         pre_comput_Ty, inv_Tmu = self._precompute_matrix(x, y, self.mu)
         
         eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
         x = pre_comput_Ty
         u0 = inv_Tmu @ (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-        u1 = self._shrink(self.R_dot(x) + eta1, self.lambd/(self.mu*self.nu))
-        x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.R_dot_adj(u1 - eta1))   # transpose sur le A_dot??
+        rx, R = self.wavelet_regularization(x)
+        u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
+        x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1), R)   # transpose sur le A_dot??
         iter = 0
 
         #paramètres pour plot la convergence : 
@@ -152,18 +247,26 @@ class ADMMP2:
         tabTime = []
         timeRef= time.time()
         err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
-
-        while (err)>eps:
+        
+        
+        if stop is None:
+            nstop = np.inf
+        else:
+            nstop=stop
+            
+            
+        while (err)>eps and iter<nstop:
             x = x_
             u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-            u1 = self._shrink(self.R_dot(x) + eta1, self.lambd/(self.mu*self.nu))
+            rx, R = self.wavelet_regularization(x)
+            u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
 
-            x_ = self.H_inv_dot(self.A_dot_adj(u0 - eta0) + self.nu * self.R_dot_adj(u1 - eta1)) # transpose sur le A_dot??
+            x_ = self.H_inv_dot(self.A_dot_adj(u0 - eta0) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1), R) # transpose sur le A_dot??
 
             eta0 = eta0 - u0 + self.A_dot(x_)
-            eta1 = eta1 - u1 + self.R_dot(x_)
+            rx, _ = self.wavelet_regularization(x_)
+            eta1 = eta1 - u1 + rx
             iter += 1
-
             tabError.append(err)
             err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
             tabTime.append(time.time()-timeRef)
@@ -207,3 +310,28 @@ class ADMMP2:
                         )
         )
         fig.show()
+
+
+
+
+
+
+    def R_dot(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x))).real     
+    def R_dot_adj(self,x:np.ndarray)->np.ndarray:
+        return np.fft.ifft2(np.multiply(np.conj(self.R_fft),np.fft.fft2(x))).real      
+    
+    def wavelet_regularization_auto_adj(self)->np.ndarray:
+        # Choose the wavelet type and level
+        wavelet = 'db4'
+        level = 2
+        # Perform 2D wavelet decomposition
+        coeffs = pywt.wavedec2(self.x, wavelet, level=level)
+
+        # Compute the wavelet transform matrix
+        W = pywt.coeffs_to_array(coeffs)[0]
+
+        # Compute the auto-adjoint matrix
+        W_autoadj = np.dot(W, W.T)
+        
+        return W_autoadj
