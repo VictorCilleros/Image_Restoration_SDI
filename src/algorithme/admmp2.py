@@ -8,7 +8,8 @@ from PIL import Image
 #    - Vérifier le calcul de R.T@R dans le domaine de Fourier car normalement R.T@R = np.fft.ifft2(D * np.fft.fft2()) avec D diagonale
 #    - Si besoin prendre R = Id au début
 #    - h opérateur de convolution, par exemple array de taille 9 pour une fenêtre 3*3 (peut être que des 1 ou des coefs d'une gausienne par ex)
-
+#    - h vecteur de taille 9 ou array de taille (3,3) ?
+#    - Vérifier chaque point de l'algorithme avec lui pour être sur de comprendre
 
 
 #
@@ -53,7 +54,7 @@ class ADMMP2:
             index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
     
     
-        
+        # A vérifier et à faire avec la fonction _inv
         return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0),np.linalg.inv(np.pad(np.eye(y.shape[0], y.shape[1]), pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0) + mu * np.eye(x.shape[0], x.shape[1]))
 
     
@@ -72,7 +73,6 @@ class ADMMP2:
 
         P2_h = np.pad(h, ((0, M1-M2), (0, N1-N2)), "constant", constant_values=(0))
         dft_P1_x = np.fft.rfft2(x)
-        dft_P2_h = np.fft.rfft2(P2_h)
         dft_P2_h = np.fft.rfft2(P2_h)
         hadamard = np.multiply(dft_P1_x, dft_P2_h)
         inv = np.fft.irfft2(hadamard)
@@ -98,13 +98,6 @@ class ADMMP2:
         return : float, renvoie 1/x si x ne vaut pas 0, 0 sinon.
         """
         return 1/x if x!=0 else 0
-    
-    def fdiag_inv(self, h:np.ndarray)-> np.ndarray:
-        """
-        param h(np.ndarray):opérateur de convolution
-        return : np.ndarray, pré-calcule l'inverse de la transformée de Fourier discrète. Utile pour le reste du problème.
-        """
-        return self._inv(np.fft.fft2(h)**2)
 
     def fft(self,arr:np.ndarray)->np.ndarray:
         """
@@ -123,19 +116,19 @@ class ADMMP2:
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
         return : np.ndarray, multiplication en passant par le domaine de Fourier
         """
-        return np.fft.ifft2(np.multiply(self.inv_H,np.fft.fft2(x))) + self.nu*np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x)))    # TODO faire le produit terme à terme et pas le @
+        H_nu_inv = 0 # A remplir 
+        return np.fft.ifft2(np.multiply(H_nu_inv,np.fft.fft2(x))) 
     
     def A_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x))).real    
 
     def A_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.A_fft),np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(np.conj(self.A_fft),np.fft.fft2(x))).real      
 
     def R_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
-
+        return np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x))).real     
     def R_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.R_fft),np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(np.conj(self.R_fft),np.fft.fft2(x))).real      
     
 
 
@@ -148,15 +141,16 @@ class ADMMP2:
         pre_comput_Ty, inv_Tmu = self._precompute_matrix(x, y, self.mu)
         
         eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
+        x = pre_comput_Ty
         u0 = inv_Tmu @ (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
         u1 = self._shrink(self.R_dot(x) + eta1, self.lambd/(self.mu*self.nu))
-        x_ = self.H_inv_dot(self.A_dot((u0 - eta0)) + self.nu * self.R_dot(u1 - eta1))   # transpose sur le A_dot??
+        x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.R_dot_adj(u1 - eta1))   # transpose sur le A_dot??
         iter = 0
 
         #paramètres pour plot la convergence : 
         tabError = []
         tabTime = []
-        timeRef= time()
+        timeRef= time.time()
         err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
 
         while (err)>eps:
@@ -172,7 +166,7 @@ class ADMMP2:
 
             tabError.append(err)
             err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
-            tabTime.append(time()-timeRef)
+            tabTime.append(time.time()-timeRef)
             
         return x_, iter,tabError,tabTime
 
