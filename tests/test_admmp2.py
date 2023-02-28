@@ -19,7 +19,7 @@ class Test_TestADMMP2(unittest.TestCase):
         #Pas good encore
         """ Test if all of the points are in the ball"""
         rng = np.random.default_rng(84548)
-        shape, shape = rng.integers(10,100)
+        shape = rng.integers(10,100)
         x = rng.integers(0, 255, size=(shape, shape))
         h = h = 1/16 * np.array([[1,2,1],
                      [2,4,2],

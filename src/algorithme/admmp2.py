@@ -54,7 +54,7 @@ class ADMMP2:
     
     
         
-        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0), 1
+        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0),np.linalg.inv(np.pad(np.eye(y.shape[0], y.shape[1]), pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0) + mu * np.eye(x.shape[0], x.shape[1]))
 
     
     
@@ -129,13 +129,13 @@ class ADMMP2:
         return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
 
     def A_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.A_fft)*np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(np.conj(self.A_fft),np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
 
     def R_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(self.R_fft*np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x)))     # TODO faire le produit terme à terme et pas le @
 
     def R_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.R_fft)*np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
+        return np.fft.ifft2(np.multiply(np.conj(self.R_fft),np.fft.fft2(x)))      # TODO faire le produit terme à terme et pas le @
     
 
 
@@ -149,7 +149,7 @@ class ADMMP2:
         
         eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
         u0 = inv_Tmu @ (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-        u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
+        u1 = self._shrink(self.R_dot(x) + eta1, self.lambd/(self.mu*self.nu))
         x_ = self.H_inv_dot(self.A_dot((u0 - eta0)) + self.nu * self.R_dot(u1 - eta1))   # transpose sur le A_dot??
         iter = 0
 
@@ -162,7 +162,7 @@ class ADMMP2:
         while (err)>eps:
             x = x_
             u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-            u1 = self._shrink(self.R_dot(x) + eta1, self.lamb/(self.mu*self.nu))
+            u1 = self._shrink(self.R_dot(x) + eta1, self.lambd/(self.mu*self.nu))
 
             x_ = self.H_inv_dot(self.A_dot_adj(u0 - eta0) + self.nu * self.R_dot_adj(u1 - eta1)) # transpose sur le A_dot??
 
