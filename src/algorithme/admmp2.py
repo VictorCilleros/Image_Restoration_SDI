@@ -114,33 +114,16 @@ class ADMMP2:
             np.ndarray: image_reconstructed
         """
         # Choose the wavelet type and level
-        wavelet = 'db4'
+        wavelet = 'db1'
         level = 2
 
         # Perform 2D wavelet decomposition
-        coeffs = pywt.wavedec2(x, wavelet, level=level)
-        W = pywt.coeffs_to_array(coeffs)[0]
-        # Set a threshold for coefficients
-        """threshold = 0.2 # your threshold value
+        coeffs = pywt.wavedec2(x, wavelet, level=level, mode='zero')
+        W, slices = pywt.coeffs_to_array(coeffs)
 
-        # Apply soft thresholding to the coefficients
-        coeffs_thresh = []
-        for c in coeffs:
-            if type(c) == tuple:
-                # Detail coefficients
-                c_thresh = tuple(pywt.threshold(arr, threshold, 'soft') for arr in c)
-            else:
-                # Approximation coefficient
-                c_thresh = pywt.threshold(c, threshold, 'soft')
-            coeffs_thresh.append(c_thresh)
-
-        # Reconstruct
-        img_reconstructed = pywt.waverec2(coeffs_thresh, wavelet)"""
-        coeffs_thresh = coeffs
-        img_reconstructed = pywt.waverec2(coeffs_thresh, wavelet)
-        return img_reconstructed, W
+        return W, slices
     
-    def wavelet_regularization_adjoint(self, x: np.ndarray) -> np.ndarray:
+    def wavelet_regularization_adjoint(self, x:np.ndarray, slices) -> np.ndarray:
         """Computes R*x (sparsifying transform with wavelets frames adjoint)
 
         Args:
@@ -150,27 +133,17 @@ class ADMMP2:
             np.ndarray: Results of Sparsifying adjoint transform on the given image.
         """
         # Choose the wavelet type and level
-        wavelet = 'db4'
-        level = 2
-
-        # Perform 2D wavelet decomposition
-        coeffs = pywt.wavedec2(x, wavelet, level=level)
-
-        # Obtain the transpose of the wavelet coefficients
-        coeffs_T = []
-        for c in coeffs:
-            c_T = tuple(arr.T for arr in c)
-            coeffs_T.append(c_T)
-
+        wavelet = 'db1'
+        coeffs = pywt.array_to_coeffs(x, slices, output_format='wavedec2')
         # Obtain the adjoint using the inverse wavelet transform
-        img_adjoint = pywt.waverec2(coeffs_T, wavelet)
+        img_adjoint = pywt.waverec2(coeffs, wavelet, mode='zero')
 
         return img_adjoint
 
 
     
 
-    def H_inv_dot(self,x:np.ndarray, R)->np.ndarray:
+    def H_inv_dot(self,x:np.ndarray)->np.ndarray:
         """
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
         return : np.ndarray, multiplication en passant par le domaine de Fourier
@@ -193,6 +166,7 @@ class ADMMP2:
 
     def fit_transform(self, y:np.ndarray, eps:float=10e-2, stop=None):
         x = self.x
+        xref = self.x
         mask = np.full(y.shape, 1/(1+self.mu))
         mask = np.pad(mask, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=1/self.mu)
         pre_comput_Ty = self._precompute_matrix(x, y, self.mu)
@@ -200,16 +174,19 @@ class ADMMP2:
         eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
         x = pre_comput_Ty
         u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-        rx, R = self.wavelet_regularization(x)
+        rx, slices = self.wavelet_regularization(x)
         u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
-        x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1), R)   # transpose sur le A_dot??
+        x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1, slices))   # transpose sur le A_dot??
+        eta0 = eta0 - u0 + self.A_dot(x_)
+        rx, _ = self.wavelet_regularization(x_)
+        eta1 = eta1 - u1 + rx
         iter = 0
 
         #paramètres pour plot la convergence : 
         tabError = []
         tabTime = []
         timeRef= time.time()
-        err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
+        err = np.linalg.norm(x_ - xref) / np.linalg.norm(xref)
         
         
         if stop is None:
@@ -217,21 +194,18 @@ class ADMMP2:
         else:
             nstop=stop
             
-            
-        while (err)>eps and iter<nstop:
+        while err>eps and iter<nstop:
             x = x_
             u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-            rx, R = self.wavelet_regularization(x)
+            rx, slices = self.wavelet_regularization(x)
             u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
-
-            x_ = self.H_inv_dot(self.A_dot_adj(u0 - eta0) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1), R) # transpose sur le A_dot??
-
+            x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1, slices))   # transpose sur le A_dot??
             eta0 = eta0 - u0 + self.A_dot(x_)
             rx, _ = self.wavelet_regularization(x_)
             eta1 = eta1 - u1 + rx
             iter += 1
             tabError.append(err)
-            err = np.linalg.norm(x_ - x) / np.linalg.norm(x)
+            err = np.linalg.norm(x_ - xref) / np.linalg.norm(xref)
             tabTime.append(time.time()-timeRef)
             
         return x_, iter,tabError,tabTime
