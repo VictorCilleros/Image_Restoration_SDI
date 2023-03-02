@@ -8,13 +8,6 @@ import pywt
 # TODO : 
 #    -  verifier que l'utilisation de H_inv_dot et A_dot fonctionnne bien (peut être prblème de dim, en théorie le produit dans np.fft.ifft2 doit être terme à terme et il faut padder si  besoin)
 #    - Vérifier le calcul de R.T@R dans le domaine de Fourier car normalement R.T@R = np.fft.ifft2(D * np.fft.fft2()) avec D diagonale
-#    - Si besoin prendre R = Id au début
-#    - h opérateur de convolution, par exemple array de taille 9 pour une fenêtre 3*3 (peut être que des 1 ou des coefs d'une gausienne par ex)
-#    - h vecteur de taille 9 ou array de taille (3,3) ?
-#    - Vérifier chaque point de l'algorithme avec lui pour être sur de comprendre
-
-
-#
 #  h = 1/16 * np.array([[1,2,1],[2,4,2],[1,2,1]])
 #  R = 
 
@@ -31,9 +24,8 @@ class ADMMP2:
         self.mu = mu
         self.nu = nu
         self.A_fft = self.fft(arr=np.pad(h, ((0, x.shape[0] - h.shape[0]), (0, x.shape[1]-h.shape[1])), "constant", constant_values=(0)))
-        self.inv_H = np.linalg.inv(self.A_fft)
         self.R_fft = self.fft(arr=R)
-
+        self.H_nu_inv = 1/(np.square(np.absolute(self.A_fft)) + nu)
 
     
 
@@ -57,7 +49,7 @@ class ADMMP2:
     
     
         # A vérifier et à faire avec la fonction _inv
-        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0),np.linalg.inv(np.pad(np.eye(y.shape[0], y.shape[1]), pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0) + mu * np.eye(x.shape[0], x.shape[1]))
+        return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0)
 
     
     
@@ -129,7 +121,7 @@ class ADMMP2:
         coeffs = pywt.wavedec2(x, wavelet, level=level)
         W = pywt.coeffs_to_array(coeffs)[0]
         # Set a threshold for coefficients
-        threshold = 0.2 # your threshold value
+        """threshold = 0.2 # your threshold value
 
         # Apply soft thresholding to the coefficients
         coeffs_thresh = []
@@ -143,6 +135,8 @@ class ADMMP2:
             coeffs_thresh.append(c_thresh)
 
         # Reconstruct
+        img_reconstructed = pywt.waverec2(coeffs_thresh, wavelet)"""
+        coeffs_thresh = coeffs
         img_reconstructed = pywt.waverec2(coeffs_thresh, wavelet)
         return img_reconstructed, W
     
@@ -181,40 +175,7 @@ class ADMMP2:
         param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
         return : np.ndarray, multiplication en passant par le domaine de Fourier
         """
-        fftA = self.A_fft
-        # Compute the FFT of the sparsifying operator R
-        fftR = self.fft(R)
-        nu = self.nu
-
-
-        # Compute the size of the matrices
-        m, n = fftA.shape
-        k, l = R.shape
-
-        # Create the diagonal matrix D_nu
-        D_nu = np.zeros((m, n))
-        D_nu[0, 0] = np.real(fftA[0, 0]) + nu * np.real(fftR[0, 0])
-        for i in range(1, m):
-            D_nu[i, 0] = np.real(fftA[i, 0]) + nu * np.real(fftR[i % k, 0])
-        for j in range(1, n):
-            D_nu[0, j] = np.real(fftA[0, j]) + nu * np.real(fftR[0, j % l])
-            
-        for i in range(1, m):
-            for j in range(1, n):
-                D_nu[i, j] = nu * np.real(fftR[i % k, j % l])
-
-        # Compute the inverse of D_nu using element-wise division
-        invD_nu = 1 / D_nu
-
-        # Create the diagonal matrix from the inverse DFT coefficients
-        diag = np.fft.ifft2(invD_nu)
-
-        # Compute the FFT matrix
-        F = np.fft.fft2(np.eye(m, n))
-
-        # Compute the inverse of H_nu using the formula
-        H_nu_inv = (1 / (m * n)) * np.fft.ifft2(np.conj(F) * diag * F)
-        return np.fft.ifft2(np.multiply(H_nu_inv,np.fft.fft2(x))).real
+        return np.fft.ifft2(np.multiply(self.H_nu_inv,np.fft.fft2(x))).real
     
     def A_dot(self,x:np.ndarray)->np.ndarray:
         return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x))).real    
@@ -232,11 +193,13 @@ class ADMMP2:
 
     def fit_transform(self, y:np.ndarray, eps:float=10e-2, stop=None):
         x = self.x
-        pre_comput_Ty, inv_Tmu = self._precompute_matrix(x, y, self.mu)
+        mask = np.full(y.shape, 1/(1+self.mu))
+        mask = np.pad(mask, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=1/self.mu)
+        pre_comput_Ty = self._precompute_matrix(x, y, self.mu)
         
         eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
         x = pre_comput_Ty
-        u0 = inv_Tmu @ (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
+        u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
         rx, R = self.wavelet_regularization(x)
         u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
         x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1), R)   # transpose sur le A_dot??
@@ -257,7 +220,7 @@ class ADMMP2:
             
         while (err)>eps and iter<nstop:
             x = x_
-            u0 = inv_Tmu * (pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
+            u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
             rx, R = self.wavelet_regularization(x)
             u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
 
