@@ -6,14 +6,14 @@ import pywt
 
 
 # TODO : 
-#    -  verifier que l'utilisation de H_inv_dot et A_dot fonctionnne bien (peut être prblème de dim, en théorie le produit dans np.fft.ifft2 doit être terme à terme et il faut padder si  besoin)
-#    - Vérifier le calcul de R.T@R dans le domaine de Fourier car normalement R.T@R = np.fft.ifft2(D * np.fft.fft2()) avec D diagonale
-#  h = 1/16 * np.array([[1,2,1],[2,4,2],[1,2,1]])
-#  R = 
+#    - Vérifier les différentes fonctions pour être sûr de faire les bonnes opérations. (d'après le prof ça à l'air good)
+#    - Track SNR, calculer lagrangien et evolution au cours des itérations
+#    - Problème avec H_nu_inv
+
 
 class ADMMP2:
 
-    def __init__(self, x:np.ndarray, h:np.ndarray, R:np.ndarray=np.identity(10), lambd:float=0.2, mu:np.ndarray=0.3, nu:float=0.4):
+    def __init__(self, x:np.ndarray, h:np.ndarray, lambd:float=0.2, mu:np.ndarray=0.3, nu:float=0.4):
 
         assert nu>0, "nu doit être strictement positif."
         assert mu>0, "mu doit être strictement positif."
@@ -23,9 +23,8 @@ class ADMMP2:
         self.lambd = lambd
         self.mu = mu
         self.nu = nu
-        self.A_fft = self.fft(arr=np.pad(h, ((0, x.shape[0] - h.shape[0]), (0, x.shape[1]-h.shape[1])), "constant", constant_values=(0)))
-        self.R_fft = self.fft(arr=R)
-        self.H_nu_inv = 1/(np.square(np.absolute(self.A_fft)) + nu)
+        self.A_fft = np.fft.rfft2(np.pad(h, ((0, x.shape[0] - h.shape[0]), (0, x.shape[1]-h.shape[1])), "constant", constant_values=(0)))
+        self.H_nu_inv = 1/(np.square(np.abs(self.A_fft)) + nu)
 
     
 
@@ -35,23 +34,13 @@ class ADMMP2:
 
     def _precompute_matrix(self, x:np.ndarray,  y:np.ndarray, mu:np.ndarray)-> np.ndarray:
         
-        a = (x.shape[0] - y.shape[0]) // 2
-        b = (x.shape[1] - y.shape[1]) // 2 
-        index_list = []
-        for i in range(a):
-            index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
-        for i in range(x.shape[0] -a, x.shape[0]):
-            index_list = index_list + [i*x.shape[0] + j for j in range(x.shape[0])]
-        for j in range(b):
-            index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
-        for j in range(x.shape[1] - b, x.shape[1]):
-            index_list = index_list + [x.shape[0]*i + j for i in range(a, x.shape[0] - a)]
-    
-    
         # A vérifier et à faire avec la fonction _inv
         return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0)
-
     
+            
+    #******************************************************************************************************************
+    #                                                   Utils
+    #******************************************************************************************************************
     
     def gaussian_filter_2d(self) -> np.ndarray:
         """Apply gaussian smoothing on a 2D array
@@ -72,39 +61,8 @@ class ADMMP2:
         inv = np.fft.irfft2(hadamard)
         return inv[M2//2: M1 - M2//2, N2//2: N1 - N2//2]
     
-
-    @np.vectorize
-    def _shrink(x:float, lambd:float)->float:
-        """
-        param x(float): représente une valeur à shrink
-        param lambd(float): seuil de shkrink
-        return : float, reprénte shrink(x) 
-        """
-        if -lambd<=x<=lambd:
-            return 0
-        else:
-            return x-lambd
-
-    @np.vectorize
-    def _inv(x:float)->float:
-        """
-        param x(float): paramètre considéré
-        return : float, renvoie 1/x si x ne vaut pas 0, 0 sinon.
-        """
-        return 1/x if x!=0 else 0
-
-    def fft(self,arr:np.ndarray)->np.ndarray:
-        """
-        param h(np.ndarray):opérateur considéré
-        return : np.ndarray, pré-calcule la transformée de Fourier discrète. Utile pour le reste du problème.
-        """
-        return np.fft.fft2(arr)
-
-
-    #******************************************************************************************************************
-    #                                                   Utils
-    #******************************************************************************************************************
-    def wavelet_regularization(self, x:np.ndarray)->np.ndarray:
+    
+    def wavelet_transform(self, x:np.ndarray)->np.ndarray:
         """Computes Rx (sparsifying transform with wavelets frames)
 
         Args:
@@ -112,18 +70,19 @@ class ADMMP2:
 
         Returns:
             np.ndarray: image_reconstructed
+            list : list of slices, we need this to reconstruct apply adjoint.
         """
         # Choose the wavelet type and level
-        wavelet = 'db1'
-        level = 2
+        wavelet = 'db4'
 
         # Perform 2D wavelet decomposition
-        coeffs = pywt.wavedec2(x, wavelet, level=level, mode='zero')
+        coeffs = pywt.wavedec2(x, wavelet, mode='zero')
         W, slices = pywt.coeffs_to_array(coeffs)
 
         return W, slices
     
-    def wavelet_regularization_adjoint(self, x:np.ndarray, slices) -> np.ndarray:
+    
+    def wavelet_transform_adjoint(self, x:np.ndarray, slices) -> np.ndarray:
         """Computes R*x (sparsifying transform with wavelets frames adjoint)
 
         Args:
@@ -133,33 +92,21 @@ class ADMMP2:
             np.ndarray: Results of Sparsifying adjoint transform on the given image.
         """
         # Choose the wavelet type and level
-        wavelet = 'db1'
+        wavelet = 'db4'
         coeffs = pywt.array_to_coeffs(x, slices, output_format='wavedec2')
         # Obtain the adjoint using the inverse wavelet transform
         img_adjoint = pywt.waverec2(coeffs, wavelet, mode='zero')
 
         return img_adjoint
 
-
     
-
-    def H_inv_dot(self,x:np.ndarray)->np.ndarray:
-        """
-        param x(np.ndarray):paramètre considéré qui doit être multiplié par H_inv
-        return : np.ndarray, multiplication en passant par le domaine de Fourier
-        """
-        return np.fft.ifft2(np.multiply(self.H_nu_inv,np.fft.fft2(x))).real
+    def fft_dot(self, x:np.ndarray, F:np.ndarray)->np.ndarray:
+        return np.fft.irfft2(np.multiply(F, np.fft.rfft2(x)))
     
-    def A_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(self.A_fft,np.fft.fft2(x))).real    
-
-    def A_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.A_fft),np.fft.fft2(x))).real      
-
-
-    
-
-
+    def fft_dot_adj(self, x:np.ndarray, F:np.ndarray)->np.ndarray:
+        return np.fft.irfft2(np.multiply(np.conj(F), np.fft.rfft2(x)))
+      
+ 
     #******************************************************************************************************************
     #                                                   ADMM-P2
     #******************************************************************************************************************
@@ -171,14 +118,15 @@ class ADMMP2:
         mask = np.pad(mask, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=1/self.mu)
         pre_comput_Ty = self._precompute_matrix(x, y, self.mu)
         
-        eta0, eta1 = np.zeros(x.shape),  np.zeros(x.shape)
+        eta0= np.zeros(x.shape)
         x = pre_comput_Ty
-        u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-        rx, slices = self.wavelet_regularization(x)
-        u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
-        x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1, slices))   # transpose sur le A_dot??
-        eta0 = eta0 - u0 + self.A_dot(x_)
-        rx, _ = self.wavelet_regularization(x_)
+        u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.fft_dot(x, self.A_fft) + eta0))
+        rx, slices = self.wavelet_transform(x)
+        eta1 = np.zeros(rx.shape)
+        u1 = pywt.threshold(rx + eta1, self.lambd/(self.mu*self.nu), mode='soft')
+        x_ = self.fft_dot(self.fft_dot_adj(u0 - eta0, self.A_fft) + self.nu * self.wavelet_transform_adjoint(u1 - eta1, slices), self.H_nu_inv)
+        eta0 = eta0 - u0 + self.fft_dot(x_, self.A_fft)
+        rx, _ = self.wavelet_transform(x_)
         eta1 = eta1 - u1 + rx
         iter = 0
 
@@ -196,12 +144,12 @@ class ADMMP2:
             
         while err>eps and iter<nstop:
             x = x_
-            u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.A_dot(x) + eta0))
-            rx, slices = self.wavelet_regularization(x)
-            u1 = self._shrink(rx + eta1, self.lambd/(self.mu*self.nu))
-            x_ = self.H_inv_dot(self.A_dot_adj((u0 - eta0)) + self.nu * self.wavelet_regularization_adjoint(u1 - eta1, slices))   # transpose sur le A_dot??
-            eta0 = eta0 - u0 + self.A_dot(x_)
-            rx, _ = self.wavelet_regularization(x_)
+            u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.fft_dot(x, self.A_fft) + eta0))
+            rx, slices = self.wavelet_transform(x)
+            u1 = pywt.threshold(rx + eta1, self.lambd/(self.mu*self.nu), mode='soft')
+            x_ = self.fft_dot(self.fft_dot_adj(u0 - eta0, self.A_fft) + self.nu * self.wavelet_transform_adjoint(u1 - eta1, slices), self.H_nu_inv)
+            eta0 = eta0 - u0 + self.fft_dot(x_, self.A_fft)
+            rx, _ = self.wavelet_transform(x_)
             eta1 = eta1 - u1 + rx
             iter += 1
             tabError.append(err)
@@ -247,28 +195,3 @@ class ADMMP2:
                         )
         )
         fig.show()
-
-
-
-
-
-
-    def R_dot(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(self.R_fft,np.fft.fft2(x))).real     
-    def R_dot_adj(self,x:np.ndarray)->np.ndarray:
-        return np.fft.ifft2(np.multiply(np.conj(self.R_fft),np.fft.fft2(x))).real      
-    
-    def wavelet_regularization_auto_adj(self)->np.ndarray:
-        # Choose the wavelet type and level
-        wavelet = 'db4'
-        level = 2
-        # Perform 2D wavelet decomposition
-        coeffs = pywt.wavedec2(self.x, wavelet, level=level)
-
-        # Compute the wavelet transform matrix
-        W = pywt.coeffs_to_array(coeffs)[0]
-
-        # Compute the auto-adjoint matrix
-        W_autoadj = np.dot(W, W.T)
-        
-        return W_autoadj
