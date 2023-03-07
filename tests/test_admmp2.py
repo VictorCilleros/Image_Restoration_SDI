@@ -39,8 +39,8 @@ class Test_TestADMMP2(unittest.TestCase):
                      [1,2,1]])
         
         algo = ADMMP2(x, h)
-        Ax = algo.fft_dot(x, algo.A_fft)
-        A_star_y = algo.fft_dot_adj(y, algo.A_fft)
+        Ax = algo.rfft_dot(x, algo.A_fft)
+        A_star_y = algo.rfft_dot_adj(y, algo.A_fft)
         dot_a = np.hstack(Ax) @ np.hstack(y)
         dot_b = np.hstack(x) @ np.hstack(A_star_y)
         self.assertAlmostEqual(dot_a, dot_b)
