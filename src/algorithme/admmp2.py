@@ -26,7 +26,7 @@ class ADMMP2:
         self.sigma = sigma
         self.A_fft = np.fft.rfft2(np.pad(h, ((0, x.shape[0] - h.shape[0]), (0, x.shape[1]-h.shape[1])), "constant", constant_values=(0)))
         self._A_fft = np.fft.fft2(np.pad(h, ((0, x.shape[0] - h.shape[0]), (0, x.shape[1]-h.shape[1])), "constant", constant_values=(0)))
-        self.H_nu_inv = 1/(np.square(np.abs(self.A_fft)) + nu)
+        self.H_nu_inv = 1/(np.abs(self.A_fft)**2 + nu)
 
     
 
@@ -34,7 +34,7 @@ class ADMMP2:
     #                                                Pré-compute
     #******************************************************************************************************************
 
-    def _precompute_matrix(self, x:np.ndarray,  y:np.ndarray, mu:np.ndarray)-> np.ndarray:
+    def _precompute_matrix(self, x:np.ndarray,  y:np.ndarray)-> np.ndarray:
         
         # A vérifier et à faire avec la fonction _inv
         return np.pad(y, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=0)
@@ -86,15 +86,28 @@ class ADMMP2:
             list : list of slices, we need this to reconstruct apply adjoint.
         """
         # Choose the wavelet type and level
-        wavelet = 'db4'
-
+        wavelet = 'db2'
+        level = 2
         # Perform 2D wavelet decomposition
-        coeffs = pywt.wavedec2(x, wavelet, mode='zero')
+        coeffs = pywt.wavedec2(x, wavelet, level=level,  mode='zero')
         W, slices = pywt.coeffs_to_array(coeffs)
 
         return W, slices
     
+    def wavelet_transform_2(self, x):
+        cA, (cH, cV, cD) = pywt.dwt2(x, 'haar')
+        cTOP = np.concatenate((cA, cH), axis=1)
+        cBOT = np.concatenate((cV, cD), axis=1)
+        c = np.concatenate((cTOP, cBOT), axis=0)
+        return c
     
+    def wavelet_transform_adjoint_2(self, c, dim):
+        cA_, cH_, cV_, cD_ = c[:dim, :dim], c[:dim, dim:], c[dim:, :dim], c[dim:, dim:]
+        coeffs_ = cA_, (cH_, cV_, cD_) 
+        xr = pywt.idwt2(coeffs_, 'haar')
+        return xr
+
+
     def wavelet_transform_adjoint(self, x:np.ndarray, slices) -> np.ndarray:
         """Computes R*x (sparsifying transform with wavelets frames adjoint)
 
@@ -105,7 +118,7 @@ class ADMMP2:
             np.ndarray: Results of Sparsifying adjoint transform on the given image.
         """
         # Choose the wavelet type and level
-        wavelet = 'db4'
+        wavelet = 'db2'
         coeffs = pywt.array_to_coeffs(x, slices, output_format='wavedec2')
         # Obtain the adjoint using the inverse wavelet transform
         img_adjoint = pywt.waverec2(coeffs, wavelet, mode='zero')
@@ -128,28 +141,36 @@ class ADMMP2:
     #******************************************************************************************************************
 
     def fit_transform(self, y:np.ndarray, eps:float=10e-2, stop=None):
+        
         x = self.x
         xref = self.x
+        
         mask = np.full(y.shape, 1/(1+self.mu))
         mask = np.pad(mask, pad_width=((x.shape[0] - y.shape[0])//2, (x.shape[1] - y.shape[1])//2), mode='constant', constant_values=1/self.mu)
-        pre_comput_Ty = self._precompute_matrix(x, y, self.mu)
+        pre_comput_Ty = self._precompute_matrix(x, y)
         
         eta0= np.zeros(x.shape)
-        x = self._init_x(y)
-        u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.rfft_dot(x, self.A_fft) + eta0))
+        x = self.rfft_dot_adj(pre_comput_Ty, self.A_fft)
         rx, slices = self.wavelet_transform(x)
         eta1 = np.zeros(rx.shape)
+        
+        u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.rfft_dot(x, self.A_fft) + eta0))
         u1 = pywt.threshold(rx + eta1, self.lambd/(self.mu*self.nu), mode='soft')
-        x_ = self.rfft_dot(self.rfft_dot_adj(u0 - eta0, self.A_fft) + self.nu * self.wavelet_transform_adjoint(u1 - eta1, slices), self.H_nu_inv)
+        
+        x_ = np.fft.irfft2(np.multiply(self.H_nu_inv, np.multiply(np.conj(self.A_fft), np.fft.rfft2(u0-eta0)) + self.nu * np.fft.rfft2(self.wavelet_transform_adjoint(u1 - eta1, slices))))
+        
         Ax_ = self.rfft_dot(x_, self.A_fft)
-        eta0 = eta0 - u0 + Ax_
         rx, _ = self.wavelet_transform(x_)
+        
+        eta0 = eta0 - u0 + Ax_
         eta1 = eta1 - u1 + rx
+        
         iter = 0
-        err = np.linalg.norm(x_ - xref,1) / np.linalg.norm(xref,1)
+        
+        #paramètres pour plot la convergence : 
+        err = np.linalg.norm(x_ - xref,2)**2 / np.linalg.norm(xref,2)**2
         bsnr = 10*np.log10(np.var(Ax_)/self.sigma**2)
         lag = 1/2 * np.linalg.norm(y - self.rfft_dot(u0, self.A_fft)[(x.shape[0]-y.shape[0])//2:(x.shape[0]+y.shape[0])//2, (x.shape[1]-y.shape[1])//2:(x.shape[1]+y.shape[1])//2]) + self.lambd*np.linalg.norm(u1, 1) + self.mu/2 * np.linalg.norm(u0-Ax_-eta0)**2 + self.mu*self.nu/2*np.linalg.norm(u1-rx-eta1)**2
-        #paramètres pour plot la convergence : 
         tabError = [err]
         tabTime = [0]
         tabBSNR = [bsnr]
@@ -165,17 +186,23 @@ class ADMMP2:
             
         while err>eps and iter<nstop:
             x = x_
+            
             u0 = np.multiply(mask, pre_comput_Ty + self.mu * (self.rfft_dot(x, self.A_fft) + eta0))
             rx, slices = self.wavelet_transform(x)
             u1 = pywt.threshold(rx + eta1, self.lambd/(self.mu*self.nu), mode='soft')
-            x_ = self.rfft_dot(self.rfft_dot_adj(u0 - eta0, self.A_fft) + self.nu * self.wavelet_transform_adjoint(u1 - eta1, slices), self.H_nu_inv)
+            x_ = np.fft.irfft2(np.multiply(self.H_nu_inv, np.multiply(np.conj(self.A_fft), np.fft.rfft2(u0-eta0)) + self.nu * np.fft.rfft2(self.wavelet_transform_adjoint(u1 - eta1, slices))))
+            
             Ax_ = self.rfft_dot(x_, self.A_fft)
-            eta0 = eta0 - u0 + Ax_
             rx, _ = self.wavelet_transform(x_)
+             
+            eta0 = eta0 - u0 + Ax_
             eta1 = eta1 - u1 + rx
+            
+            
             iter += 1
+            
+            err = np.linalg.norm(x_ - xref, 2)**2 / np.linalg.norm(xref, 2)**2
             tabError.append(err)
-            err = np.linalg.norm(x_ - xref, 1) / np.linalg.norm(xref, 1)
             tabTime.append(time.time()-timeRef)
             bsnr = 10*np.log10(np.var(Ax_)/self.sigma**2)
             tabBSNR.append(bsnr)
